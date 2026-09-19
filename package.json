@@ -1,5 +1,9 @@
 {
+<<<<<<< HEAD
   "name": "millennialz-cafe",
+=======
+  "name": "millennialz-billing",
+>>>>>>> 4f74304f1a65843156fcfe74a0274ee09f162fee
   "version": "0.1.0",
   "private": true,
   "scripts": {

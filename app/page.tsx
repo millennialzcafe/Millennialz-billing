@@ -551,16 +551,9 @@ export default function MillennialzBillingApp() {
       sortOrder: Number(category.Sort_order ?? 0),
     }));
 
-    setCloudCategories(
-      convertedCategories.length > 0
-        ? convertedCategories
-        : CATEGORIES.map((name, index) => ({
-            id: `fallback-${index}`,
-            name,
-            image: CATEGORY_IMAGES[name] || makeImage("🍽️", name),
-            sortOrder: index + 1,
-          }))
-    );
+    // Supabase is the source of truth. Keep an empty array empty so a removed
+    // category does not silently reappear from the local fallback list.
+    setCloudCategories(convertedCategories);
 
     const { data: menuItems, error: menuError } = await supabase
       .from("Menu_Items")
@@ -589,7 +582,9 @@ export default function MillennialzBillingApp() {
       }))
       .filter((item) => item.category);
 
-    setCloudMenu(convertedMenu.length > 0 ? convertedMenu : MENU_DATA);
+    // Supabase is the source of truth. Keep an empty menu empty so deactivated
+    // items do not silently reappear from the local fallback list.
+    setCloudMenu(convertedMenu);
   };
 
   const resetCategoryForm = () => {
@@ -2423,6 +2418,154 @@ export default function MillennialzBillingApp() {
               <p className="text-xs text-slate-400 mt-1">
                 Add, edit, change prices, images, categories, or deactivate menu items.
               </p>
+            </div>
+
+            {/* CATEGORY MANAGEMENT */}
+            <div className="mb-5 bg-slate-900 border border-slate-800 rounded-2xl p-5">
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <div>
+                  <h3 className="text-lg font-black">Category Management</h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Add, edit, change photos/order, or remove categories. Changes appear in Billing automatically.
+                  </p>
+                </div>
+                <button
+                  onClick={startNewCategory}
+                  className="text-xs bg-red-600 hover:bg-red-500 px-4 py-2.5 rounded-lg font-black"
+                >
+                  + New Category
+                </button>
+              </div>
+
+              {categoryAdminError && (
+                <p className="mb-4 rounded-xl border border-red-900 bg-red-950/40 px-3 py-2 text-xs text-red-300">
+                  {categoryAdminError}
+                </p>
+              )}
+
+              {categorySuccessMessage && (
+                <p className="mb-4 rounded-xl border border-emerald-900 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-300">
+                  {categorySuccessMessage}
+                </p>
+              )}
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
+                {cloudCategories.map((category) => (
+                  <div key={category.id} className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">
+                    <img
+                      src={category.image}
+                      alt={category.name}
+                      onError={(event) => {
+                        const fallback = CATEGORY_IMAGES[category.name] || makeImage("🍽️", category.name);
+                        if (event.currentTarget.src !== fallback) event.currentTarget.src = fallback;
+                      }}
+                      className="w-full aspect-[4/3] object-cover"
+                    />
+                    <div className="p-2.5">
+                      <p className="text-xs font-bold truncate" title={category.name}>{category.name}</p>
+                      <p className="text-[10px] text-slate-500 mt-1">Order: {category.sortOrder}</p>
+                      <div className="flex gap-1 mt-2">
+                        <button
+                          onClick={() => startEditCategory(category)}
+                          className="flex-1 text-[10px] px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 font-bold"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => deactivateCategory(category)}
+                          disabled={categorySaving}
+                          className="text-[10px] px-2 py-1.5 rounded-lg bg-red-950 hover:bg-red-900 text-red-300 font-bold disabled:opacity-50"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+
+                {cloudCategories.length === 0 && (
+                  <div className="col-span-full rounded-xl border border-dashed border-slate-700 p-6 text-center text-xs text-slate-500">
+                    No active categories. Click <span className="text-red-400 font-bold">+ New Category</span> to create one.
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-5 border-t border-slate-800 pt-5">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h4 className="text-sm font-black">{editingCategoryId ? "Edit Category" : "Add Category"}</h4>
+                    <p className="text-[11px] text-slate-500 mt-1">Category photos are stored in Supabase Storage.</p>
+                  </div>
+                  {editingCategoryId && (
+                    <button onClick={resetCategoryForm} className="text-xs bg-slate-800 hover:bg-slate-700 px-3 py-2 rounded-lg">
+                      Cancel
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-400 mb-2">Category Name</label>
+                    <input
+                      ref={categoryNameInputRef}
+                      value={categoryForm.name}
+                      onChange={(e) => {
+                        setCategoryForm((previous) => ({ ...previous, name: e.target.value }));
+                        setCategoryAdminError("");
+                        setCategorySuccessMessage("");
+                      }}
+                      placeholder="e.g. Desserts"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-3 text-sm outline-none focus:border-red-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-400 mb-2">Display Order</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={categoryForm.sortOrder}
+                      onChange={(e) => {
+                        setCategoryForm((previous) => ({ ...previous, sortOrder: e.target.value }));
+                        setCategoryAdminError("");
+                        setCategorySuccessMessage("");
+                      }}
+                      placeholder={String(cloudCategories.length + 1)}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-3 text-sm outline-none focus:border-red-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-400 mb-2">Category Image</label>
+                    <input
+                      ref={categoryImageInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/gif,image/*"
+                      onChange={(e) => handleCategoryImageChange(e.target.files?.[0] || null)}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-3 text-sm outline-none focus:border-red-500 file:mr-3 file:rounded-lg file:border-0 file:bg-red-600 file:px-3 file:py-2 file:text-xs file:font-bold file:text-white"
+                    />
+                    {selectedCategoryImageFile && (
+                      <p className="text-[11px] text-emerald-400 mt-2 truncate">
+                        Selected: {selectedCategoryImageFile.name}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <button
+                  disabled={categorySaving || categoryUploadingImage}
+                  onClick={saveCategory}
+                  className="w-full md:w-auto mt-4 px-5 py-3 rounded-xl bg-red-600 hover:bg-red-500 disabled:bg-slate-700 disabled:text-slate-500 font-black text-sm"
+                >
+                  {categoryUploadingImage
+                    ? "UPLOADING IMAGE..."
+                    : categorySaving
+                      ? "SAVING..."
+                      : editingCategoryId
+                        ? "SAVE CATEGORY CHANGES"
+                        : "ADD CATEGORY"}
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">

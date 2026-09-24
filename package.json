@@ -1,9 +1,5 @@
 {
-<<<<<<< HEAD
   "name": "millennialz-cafe",
-=======
-  "name": "millennialz-billing",
->>>>>>> 4f74304f1a65843156fcfe74a0274ee09f162fee
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -13,18 +9,19 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.116.0",
     "next": "16.3.5",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/node": "^20.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "eslint": "^9.0.0",
     "eslint-config-next": "16.3.5",
-    "tailwindcss": "^4",
-    "typescript": "^5"
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.0.0"
   }
 }

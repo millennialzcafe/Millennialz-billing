@@ -2294,44 +2294,7 @@ periodOnlineSales: filteredBills
                 </div>
 
               )}
-{/* PAYMENT TYPE */}
-
-<div className="border-t border-slate-800 mt-5 pt-5">
-
-  <p className="text-sm font-black mb-3">
-    Payment Type
-  </p>
-
-  <div className="grid grid-cols-2 gap-3">
-
-    <button
-      type="button"
-      onClick={() => setPaymentType("Cash")}
-      className={`py-3 rounded-xl font-black text-sm border transition ${
-        paymentType === "Cash"
-          ? "bg-green-600 border-green-500 text-white"
-          : "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800"
-      }`}
-    >
-      💵 Cash
-    </button>
-
-    <button
-      type="button"
-      onClick={() => setPaymentType("Online")}
-      className={`py-3 rounded-xl font-black text-sm border transition ${
-        paymentType === "Online"
-          ? "bg-blue-600 border-blue-500 text-white"
-          : "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800"
-      }`}
-    >
-      📱 Online
-    </button>
-
-  </div>
-
-</div>
-              {/* TOTAL */}
+{/* TOTAL */}
 
               <div className="border-t border-slate-800 mt-5 pt-5">
 

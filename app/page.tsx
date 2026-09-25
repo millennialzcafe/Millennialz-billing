@@ -40,6 +40,7 @@ interface BillRecord {
   timestamp: string;
   createdAt: number;
   status: string;
+  paymentType: string;
 }
 
 // ============================================================
@@ -479,8 +480,51 @@ export default function MillennialzBillingApp() {
   });
 
   const [billHistory, setBillHistory] = useState<BillRecord[]>([]);
+  const [paymentType, setPaymentType] = useState<"Cash" | "Online">("Cash");
+  const [analyticsPeriod, setAnalyticsPeriod] = useState<
+  "Today" | "Yesterday" | "This Week" | "This Month" | "Custom"
+>("Today");
+const [customStartDate, setCustomStartDate] = useState("");
+const [customEndDate, setCustomEndDate] = useState("");
 
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
+  const [googleSyncing, setGoogleSyncing] = useState(false);
+const [googleSyncMessage, setGoogleSyncMessage] = useState("");
+
+const syncToGoogleSheets = async () => {
+  if (googleSyncing) {
+    return;
+  }
+
+  setGoogleSyncing(true);
+  setGoogleSyncMessage("");
+
+  try {
+    const response = await fetch("/api/google-sync");
+
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      throw new Error(
+        result.error || result.message || "Google Sheets sync failed."
+      );
+    }
+
+    setGoogleSyncMessage(
+      `Synced successfully — Orders: ${result.synced?.Orders ?? 0}, Order Items: ${result.synced?.Order_Items ?? 0}, Menu Items: ${result.synced?.Menu_Items ?? 0}, Categories: ${result.synced?.Categories ?? 0}, Tables: ${result.synced?.Restaurant_Tables ?? 0}`
+    );
+  } catch (error) {
+    console.error("Google Sheets sync error:", error);
+
+    setGoogleSyncMessage(
+      error instanceof Error
+        ? error.message
+        : "Google Sheets sync failed."
+    );
+  } finally {
+    setGoogleSyncing(false);
+  }
+};
   const [cancelOrderError, setCancelOrderError] = useState("");
 
   // Cloud categories are the source of truth for Billing and Menu Management.
@@ -1020,8 +1064,8 @@ export default function MillennialzBillingApp() {
         const { data: orders, error: ordersError } = await supabase
           .from("Orders")
           .select(
-            "id, created_at, Order_number, Table_id, Total, Order_type, Status"
-          )
+  "id, created_at, Order_number, Table_id, Total, Order_type, Payment_type, Status"
+)
           .order("created_at", { ascending: false });
 
         if (ordersError) {
@@ -1070,9 +1114,10 @@ export default function MillennialzBillingApp() {
           dbId: String(order.id),
           orderNumber: Number(order.Order_number),
           orderType: order.Order_type || "Takeaway",
-          items: itemsByOrder.get(String(order.id)) || [],
-          total: Number(order.Total),
-          status: String(order.Status || "Completed"),
+paymentType: order.Payment_type || "Cash",
+items: itemsByOrder.get(String(order.id)) || [],
+total: Number(order.Total),
+status: String(order.Status || "Completed"),
           timestamp: new Date(order.created_at).toLocaleString("en-IN", {
             dateStyle: "medium",
             timeStyle: "short",
@@ -1236,13 +1281,16 @@ export default function MillennialzBillingApp() {
       const { data: createdOrder, error: orderError } = await supabase
         .from("Orders")
         .insert({
-          Order_number: nextOrderNumber,
-          Table_id: tableId,
-          Total: totalAmount,
-          Order_type: activeDestination,
-          Status: "Completed",
-        })
-        .select("id, created_at, Order_number, Table_id, Total, Order_type, Status")
+  Order_number: nextOrderNumber,
+  Table_id: tableId,
+  Total: totalAmount,
+  Order_type: activeDestination,
+  Payment_type: paymentType,
+  Status: "Completed",
+})
+        .select(
+  "id, created_at, Order_number, Table_id, Total, Order_type, Payment_type, Status"
+)
         .single();
 
       if (orderError || !createdOrder) {
@@ -1289,7 +1337,8 @@ export default function MillennialzBillingApp() {
         dbId: String(createdOrder.id),
         orderNumber: nextOrderNumber,
         orderType: activeDestination,
-        status: "Completed",
+paymentType: paymentType,
+status: "Completed",
         items: currentOrder.map((item) => ({
           ...item,
         })),
@@ -1306,6 +1355,32 @@ export default function MillennialzBillingApp() {
 
       // Update the screen immediately after the cloud save succeeds.
       setBillHistory((previous) => [newBill, ...previous]);
+      // Sync the latest Supabase data to Google Sheets
+try {
+  const syncResponse = await fetch("/api/google-sync");
+
+  if (!syncResponse.ok) {
+    console.error("Google Sheets automatic sync failed.");
+  } else {
+    const syncResult = await syncResponse.json();
+
+    if (!syncResult.success) {
+      console.error(
+        "Google Sheets automatic sync failed:",
+        syncResult.error || syncResult.message
+      );
+    } else {
+      console.log(
+        "Google Sheets automatically synced after checkout."
+      );
+    }
+  }
+} catch (syncError) {
+  console.error(
+    "Google Sheets automatic sync error:",
+    syncError
+  );
+}
 
       // Clear current cart automatically.
       setActiveOrders((previous) => ({
@@ -1483,14 +1558,81 @@ export default function MillennialzBillingApp() {
   // ANALYTICS
   // ----------------------------------------------------------
 
-  const analytics = useMemo(() => {
+  const getAnalyticsDateRange = useMemo(() => {
+  const now = new Date();
+  if (analyticsPeriod === "Custom") {
+  const start = customStartDate
+    ? new Date(`${customStartDate}T00:00:00`)
+    : new Date();
+
+  const end = customEndDate
+    ? new Date(`${customEndDate}T23:59:59.999`)
+    : new Date();
+
+  return { start, end };
+}
+
+  if (analyticsPeriod === "Today") {
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+
+    const end = new Date(now);
+    end.setHours(23, 59, 59, 999);
+
+    return { start, end };
+  }
+
+  if (analyticsPeriod === "Yesterday") {
+    const start = new Date(now);
+    start.setDate(start.getDate() - 1);
+    start.setHours(0, 0, 0, 0);
+
+    const end = new Date(now);
+    end.setDate(end.getDate() - 1);
+    end.setHours(23, 59, 59, 999);
+
+    return { start, end };
+  }
+
+  if (analyticsPeriod === "This Week") {
+    const start = new Date(now);
+    const day = start.getDay();
+    const difference = day === 0 ? 6 : day - 1;
+
+    start.setDate(start.getDate() - difference);
+    start.setHours(0, 0, 0, 0);
+
+    const end = new Date(now);
+    end.setHours(23, 59, 59, 999);
+
+    return { start, end };
+  }
+
+  // This Month
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  start.setHours(0, 0, 0, 0);
+
+  const end = new Date(now);
+  end.setHours(23, 59, 59, 999);
+
+  return { start, end };
+}, [analyticsPeriod, customStartDate, customEndDate]);
+const analytics = useMemo(() => {
     const itemMap: Record<string, number> =
       {};
 
     let totalSales = 0;
+    const filteredBills = billHistory.filter((bill) => {
+  const billDate = new Date(bill.timestamp);
 
-    billHistory.filter((bill) => bill.status.toLowerCase() === "completed").forEach((bill) => {
-      totalSales += bill.total;
+  return (
+    bill.status.toLowerCase() === "completed" &&
+    billDate >= getAnalyticsDateRange.start &&
+    billDate <= getAnalyticsDateRange.end
+  );
+});
+
+filteredBills.forEach((bill) => {      totalSales += bill.total;
 
       bill.items.forEach((item) => {
         itemMap[item.name] =
@@ -1509,20 +1651,142 @@ export default function MillennialzBillingApp() {
     );
 
     return {
-      totalSales,
-      totalOrders: billHistory.filter((bill) => bill.status.toLowerCase() === "completed").length,
-      itemsSold: Object.values(itemMap).reduce(
-        (sum, value) => sum + value,
+      todaySales: billHistory
+  .filter(
+    (bill) =>
+      bill.status.toLowerCase() === "completed" &&
+      new Date(bill.timestamp).toDateString() === new Date().toDateString()
+  )
+  .reduce((sum, bill) => sum + bill.total, 0),
+
+todayOrders: billHistory.filter(
+  (bill) =>
+    bill.status.toLowerCase() === "completed" &&
+    new Date(bill.timestamp).toDateString() === new Date().toDateString()
+).length,
+
+todayCashSales: billHistory
+  .filter(
+    (bill) =>
+      bill.status.toLowerCase() === "completed" &&
+      bill.paymentType === "Cash" &&
+      new Date(bill.timestamp).toDateString() === new Date().toDateString()
+  )
+  .reduce((sum, bill) => sum + bill.total, 0),
+
+todayOnlineSales: billHistory
+  .filter(
+    (bill) =>
+      bill.status.toLowerCase() === "completed" &&
+      bill.paymentType === "Online" &&
+      new Date(bill.timestamp).toDateString() === new Date().toDateString()
+  )
+  .reduce((sum, bill) => sum + bill.total, 0),
+  totalSales,
+
+  totalOrders: filteredBills.length,
+
+  itemsSold: Object.values(itemMap).reduce(
+    (sum, value) => sum + value,
+    0
+  ),
+
+  topItems: sortedItems.slice(0, 10),
+
+  cancelledOrders: cancelledOrders.length,
+
+  cancelledValue: cancelledOrders.reduce(
+    (sum, bill) => sum + bill.total,
+    0
+  ),
+
+  cashSales: filteredBills
+  .filter((bill) => bill.paymentType === "Cash")
+  .reduce((sum, bill) => sum + bill.total, 0),
+
+  onlineSales: filteredBills
+  .filter((bill) => bill.paymentType === "Online")
+  .reduce((sum, bill) => sum + bill.total, 0),
+periodSales: filteredBills.reduce(
+  (sum, bill) => sum + bill.total,
+  0
+),
+
+periodOrders: filteredBills.length,
+
+periodCashSales: filteredBills
+  .filter((bill) => bill.paymentType === "Cash")
+  .reduce((sum, bill) => sum + bill.total, 0),
+
+periodOnlineSales: filteredBills
+  .filter((bill) => bill.paymentType === "Online")
+  .reduce((sum, bill) => sum + bill.total, 0),
+  cashOrders: filteredBills.filter(
+  (bill) => bill.paymentType === "Cash"
+).length,
+
+  onlineOrders: filteredBills.filter(
+  (bill) => bill.paymentType === "Online"
+).length,
+};
+  }, [billHistory, getAnalyticsDateRange]);
+  const reportData = useMemo(() => {
+  const { start, end } = getAnalyticsDateRange;
+
+  const periodBills = billHistory.filter((bill) => {
+    const billDate = new Date(bill.timestamp);
+
+    return (
+      billDate >= start &&
+      billDate <= end
+    );
+  });
+
+  const completedBills = periodBills.filter(
+    (bill) => bill.status.toLowerCase() === "completed"
+  );
+
+  const cancelledBills = periodBills.filter(
+    (bill) => bill.status.toLowerCase() === "cancelled"
+  );
+
+  const cashSales = completedBills
+    .filter((bill) => bill.paymentType === "Cash")
+    .reduce((sum, bill) => sum + bill.total, 0);
+
+  const onlineSales = completedBills
+    .filter((bill) => bill.paymentType === "Online")
+    .reduce((sum, bill) => sum + bill.total, 0);
+
+  const itemsSold = completedBills.reduce(
+    (sum, bill) =>
+      sum +
+      bill.items.reduce(
+        (itemSum, item) =>
+          itemSum + item.quantity,
         0
       ),
-      topItems: sortedItems.slice(0, 10),
-      cancelledOrders: cancelledOrders.length,
-      cancelledValue: cancelledOrders.reduce(
-        (sum, bill) => sum + bill.total,
-        0
-      ),
-    };
-  }, [billHistory]);
+    0
+  );
+
+  return {
+    periodBills,
+    completedBills,
+    cancelledBills,
+    totalSales: completedBills.reduce(
+      (sum, bill) => sum + bill.total,
+      0
+    ),
+    totalOrders: completedBills.length,
+    cashSales,
+    onlineSales,
+    itemsSold,
+    cancelledValue: cancelledBills.reduce(
+      (sum, bill) => sum + bill.total,
+      0
+    ),
+  };
+}, [billHistory, getAnalyticsDateRange]);
 
   // ============================================================
   // UI
@@ -2030,7 +2294,43 @@ export default function MillennialzBillingApp() {
                 </div>
 
               )}
+{/* PAYMENT TYPE */}
 
+<div className="border-t border-slate-800 mt-5 pt-5">
+
+  <p className="text-sm font-black mb-3">
+    Payment Type
+  </p>
+
+  <div className="grid grid-cols-2 gap-3">
+
+    <button
+      type="button"
+      onClick={() => setPaymentType("Cash")}
+      className={`py-3 rounded-xl font-black text-sm border transition ${
+        paymentType === "Cash"
+          ? "bg-green-600 border-green-500 text-white"
+          : "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800"
+      }`}
+    >
+      💵 Cash
+    </button>
+
+    <button
+      type="button"
+      onClick={() => setPaymentType("Online")}
+      className={`py-3 rounded-xl font-black text-sm border transition ${
+        paymentType === "Online"
+          ? "bg-blue-600 border-blue-500 text-white"
+          : "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800"
+      }`}
+    >
+      📱 Online
+    </button>
+
+  </div>
+
+</div>
               {/* TOTAL */}
 
               <div className="border-t border-slate-800 mt-5 pt-5">
@@ -2048,13 +2348,47 @@ export default function MillennialzBillingApp() {
                 </div>
 
                 {checkoutError && (
-                  <p className="text-xs text-red-400 mt-3">
-                    {checkoutError}
-                  </p>
-                )}
+  <p className="text-xs text-red-400 mt-3">
+    {checkoutError}
+  </p>
+)}
 
-                <button
-                  disabled={
+{/* PAYMENT TYPE */}
+
+<div className="mt-4">
+  <p className="text-xs font-bold text-slate-400 mb-2">
+    Payment Type
+  </p>
+
+  <div className="grid grid-cols-2 gap-2">
+    <button
+      type="button"
+      onClick={() => setPaymentType("Cash")}
+      className={`py-3 rounded-xl font-black text-sm ${
+        paymentType === "Cash"
+          ? "bg-green-600 text-white"
+          : "bg-slate-800 text-slate-300"
+      }`}
+    >
+      💵 Cash
+    </button>
+
+    <button
+      type="button"
+      onClick={() => setPaymentType("Online")}
+      className={`py-3 rounded-xl font-black text-sm ${
+        paymentType === "Online"
+          ? "bg-blue-600 text-white"
+          : "bg-slate-800 text-slate-300"
+      }`}
+    >
+      📱 Online
+    </button>
+  </div>
+</div>
+
+<button
+  disabled={
                     currentOrder.length === 0 || isCheckingOut
                   }
                   onClick={handleCheckout}
@@ -2087,17 +2421,34 @@ export default function MillennialzBillingApp() {
 
           <div className="max-w-7xl mx-auto">
 
-            <div className="mb-6">
+            <div className="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
 
-              <h2 className="text-2xl font-black">
-                History
-              </h2>
+  <div>
+    <h2 className="text-2xl font-black">
+      Sales Analytics
+    </h2>
 
-              <p className="text-xs text-slate-400 mt-1">
-                Completed and cancelled orders in chronological order. Cancelled bills remain visible for records.
-              </p>
+    <p className="text-xs text-slate-400 mt-1">
+      Sales and item movement from completed orders
+    </p>
+  </div>
 
-            </div>
+  <button
+    onClick={syncToGoogleSheets}
+    disabled={googleSyncing}
+    className="px-5 py-3 rounded-xl bg-green-600 hover:bg-green-500 disabled:bg-slate-700 disabled:cursor-not-allowed text-white font-black text-sm shadow-lg"
+  >
+    {googleSyncing
+      ? "⏳ Syncing..."
+      : "🔄 Sync to Google Sheets"}
+  </button>
+
+</div>
+{googleSyncMessage && (
+  <div className="mb-6 rounded-xl border border-green-800 bg-green-950/40 px-4 py-3 text-sm text-green-300">
+    {googleSyncMessage}
+  </div>
+)}
 
             {cancelOrderError && (
               <div className="mb-4 rounded-xl border border-red-900 bg-red-950/40 px-4 py-3 text-xs text-red-300">
@@ -2196,6 +2547,15 @@ export default function MillennialzBillingApp() {
                                 <span className="ml-3 text-sm font-bold">
                                   {bill.orderType}
                                 </span>
+                                <span
+  className={`ml-3 text-[10px] font-black px-2 py-1 rounded ${
+    bill.paymentType === "Online"
+      ? "bg-blue-950 text-blue-300"
+      : "bg-green-950 text-green-300"
+  }`}
+>
+  {bill.paymentType === "Online" ? "📱 ONLINE" : "💵 CASH"}
+</span>
                                 <span className={`ml-3 text-[10px] font-black px-2 py-1 rounded ${bill.status.toLowerCase() === "cancelled" ? "bg-red-950 text-red-300" : "bg-emerald-950 text-emerald-300"}`}>
                                   {bill.status.toUpperCase()}
                                 </span>
@@ -2880,8 +3240,332 @@ export default function MillennialzBillingApp() {
               </div>
 
             </div>
+            {/* SALES REPORT */}
 
-            {/* DESTINATION TABLE */}
+<div className="mt-6 bg-slate-900 border border-slate-800 rounded-2xl p-5">
+
+  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-5">
+
+    <div>
+      <h3 className="text-xl font-black text-white">
+        📄 Sales Report
+      </h3>
+
+      <p className="text-xs text-slate-500 mt-1">
+        Report for the selected Analytics period
+      </p>
+    </div>
+
+  </div>
+
+  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+
+    <div className="bg-slate-950 border border-slate-800 rounded-xl p-4">
+      <p className="text-xs text-slate-500 uppercase font-bold">
+        Total Sales
+      </p>
+
+      <p className="text-2xl font-black text-green-400 mt-2">
+        ₹{reportData.totalSales}
+      </p>
+    </div>
+
+    <div className="bg-slate-950 border border-slate-800 rounded-xl p-4">
+      <p className="text-xs text-slate-500 uppercase font-bold">
+        Orders
+      </p>
+
+      <p className="text-2xl font-black mt-2">
+        {reportData.totalOrders}
+      </p>
+    </div>
+
+    <div className="bg-slate-950 border border-slate-800 rounded-xl p-4">
+      <p className="text-xs text-slate-500 uppercase font-bold">
+        Cash
+      </p>
+
+      <p className="text-2xl font-black text-green-400 mt-2">
+        ₹{reportData.cashSales}
+      </p>
+    </div>
+
+    <div className="bg-slate-950 border border-slate-800 rounded-xl p-4">
+      <p className="text-xs text-slate-500 uppercase font-bold">
+        Online
+      </p>
+
+      <p className="text-2xl font-black text-blue-400 mt-2">
+        ₹{reportData.onlineSales}
+      </p>
+    </div>
+
+  </div>
+
+  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+
+    <div className="bg-slate-950 border border-slate-800 rounded-xl p-4">
+      <p className="text-xs text-slate-500 uppercase font-bold">
+        Items Sold
+      </p>
+
+      <p className="text-2xl font-black mt-2">
+        {reportData.itemsSold}
+      </p>
+    </div>
+
+    <div className="bg-slate-950 border border-slate-800 rounded-xl p-4">
+      <p className="text-xs text-slate-500 uppercase font-bold">
+        Cancelled Orders
+      </p>
+
+      <p className="text-2xl font-black text-red-400 mt-2">
+        {reportData.cancelledBills.length}
+      </p>
+    </div>
+
+    <div className="bg-slate-950 border border-slate-800 rounded-xl p-4">
+      <p className="text-xs text-slate-500 uppercase font-bold">
+        Cancelled Value
+      </p>
+
+      <p className="text-2xl font-black text-red-400 mt-2">
+        ₹{reportData.cancelledValue}
+      </p>
+    </div>
+
+  </div>
+
+</div>
+
+            {/* ANALYTICS PERIOD FILTER */}
+
+<div className="mb-6">
+  <div className="flex items-center justify-between mb-3">
+    <div>
+      <h3 className="text-lg font-black text-white">
+        📅 Sales Period
+      </h3>
+      <p className="text-xs text-slate-500 mt-1">
+        Select the period for Analytics
+      </p>
+    </div>
+  </div>
+
+  <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+  {(
+    ["Today", "Yesterday", "This Week", "This Month"] as const
+  ).map((period) => (
+    <button
+      key={period}
+      type="button"
+      onClick={() => setAnalyticsPeriod(period)}
+      className={`py-3 px-4 rounded-xl font-black text-sm transition ${
+        analyticsPeriod === period
+          ? "bg-red-600 text-white"
+          : "bg-slate-900 text-slate-400 border border-slate-800"
+      }`}
+    >
+      {period}
+    </button>
+  ))}
+
+  <button
+    type="button"
+    onClick={() => setAnalyticsPeriod("Custom")}
+    className={`py-3 px-4 rounded-xl font-black text-sm transition ${
+      analyticsPeriod === "Custom"
+        ? "bg-red-600 text-white"
+        : "bg-slate-900 text-slate-400 border border-slate-800"
+    }`}
+  >
+    Custom Date
+  </button>
+</div>
+{analyticsPeriod === "Custom" && (
+  <div className="mt-4 bg-slate-900 border border-slate-800 rounded-2xl p-4">
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+
+      <div>
+        <label className="text-xs text-slate-400 font-bold block mb-2">
+          From Date
+        </label>
+
+        <input
+          type="date"
+          value={customStartDate}
+          onChange={(e) => setCustomStartDate(e.target.value)}
+          className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-3 text-sm text-white"
+        />
+      </div>
+
+      <div>
+        <label className="text-xs text-slate-400 font-bold block mb-2">
+          To Date
+        </label>
+
+        <input
+          type="date"
+          value={customEndDate}
+          onChange={(e) => setCustomEndDate(e.target.value)}
+          className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-3 text-sm text-white"
+        />
+      </div>
+
+      <button
+        type="button"
+        onClick={() => {
+          if (customStartDate && customEndDate) {
+            setAnalyticsPeriod("Custom");
+          }
+        }}
+        className="py-3 rounded-xl bg-red-600 hover:bg-red-500 text-white font-black text-sm"
+      >
+        Apply Date Range
+      </button>
+
+    </div>
+  </div>
+)}
+</div>
+{/* DAILY SUMMARY */}
+
+<div className="mb-6">
+  <div className="flex items-center justify-between mb-4">
+    <div>
+      <h3 className="text-xl font-black text-white">
+  📅 {analyticsPeriod === "Today"
+    ? "Today's Summary"
+    : analyticsPeriod === "Yesterday"
+    ? "Yesterday's Summary"
+    : analyticsPeriod === "This Week"
+    ? "This Week's Summary"
+    : "This Month's Summary"}
+</h3>
+      <p className="text-xs text-slate-500 mt-1">
+        Completed orders for today
+      </p>
+    </div>
+  </div>
+
+  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+      <p className="text-xs text-slate-500 uppercase font-bold">
+        💰 {analyticsPeriod === "Today"
+  ? "Today's Sales"
+  : analyticsPeriod === "Yesterday"
+  ? "Yesterday's Sales"
+  : analyticsPeriod === "This Week"
+  ? "This Week's Sales"
+  : "This Month's Sales"}
+      </p>
+      <p className="text-3xl font-black mt-2 text-green-400">
+        ₹{analytics.periodSales}
+      </p>
+    </div>
+
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+      <p className="text-xs text-slate-500 uppercase font-bold">
+        🧾 {analyticsPeriod === "Today"
+  ? "Today's Orders"
+  : analyticsPeriod === "Yesterday"
+  ? "Yesterday's Orders"
+  : analyticsPeriod === "This Week"
+  ? "This Week's Orders"
+  : "This Month's Orders"}
+      </p>
+      <p className="text-3xl font-black mt-2">
+        {analytics.periodOrders}
+      </p>
+    </div>
+
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+      <p className="text-xs text-slate-500 uppercase font-bold">
+        💵 {analyticsPeriod === "Today"
+  ? "Today's Cash"
+  : analyticsPeriod === "Yesterday"
+  ? "Yesterday's Cash"
+  : analyticsPeriod === "This Week"
+  ? "This Week's Cash"
+  : "This Month's Cash"}
+      </p>
+      <p className="text-3xl font-black mt-2 text-green-400">
+        ₹{analytics.periodCashSales}
+      </p>
+    </div>
+
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+      <p className="text-xs text-slate-500 uppercase font-bold">
+        📱 {analyticsPeriod === "Today"
+  ? "Today's Online"
+  : analyticsPeriod === "Yesterday"
+  ? "Yesterday's Online"
+  : analyticsPeriod === "This Week"
+  ? "This Week's Online"
+  : "This Month's Online"}
+      </p>
+      <p className="text-3xl font-black mt-2 text-blue-400">
+        ₹{analytics.periodOnlineSales}
+      </p>
+    </div>
+
+  </div>
+</div>
+{/* PAYMENT SUMMARY */}
+
+<div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+
+  <div className="bg-slate-900 border border-green-950 rounded-2xl p-5">
+    <p className="text-xs text-slate-500 uppercase font-bold">
+      💵 Cash Collection
+    </p>
+
+    <p className="text-3xl font-black mt-2 text-green-400">
+      ₹{analytics.cashSales}
+    </p>
+
+    <p className="text-xs text-slate-500 mt-2">
+      {analytics.cashOrders} cash order(s)
+    </p>
+  </div>
+
+  <div className="bg-slate-900 border border-blue-950 rounded-2xl p-5">
+    <p className="text-xs text-slate-500 uppercase font-bold">
+      📱 Online Collection
+    </p>
+
+    <p className="text-3xl font-black mt-2 text-blue-400">
+      ₹{analytics.onlineSales}
+    </p>
+
+    <p className="text-xs text-slate-500 mt-2">
+      {analytics.onlineOrders} online order(s)
+    </p>
+  </div>
+
+  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+    <p className="text-xs text-slate-500 uppercase font-bold">
+      💵 Cash Orders
+    </p>
+
+    <p className="text-3xl font-black mt-2">
+      {analytics.cashOrders}
+    </p>
+  </div>
+
+  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+    <p className="text-xs text-slate-500 uppercase font-bold">
+      📱 Online Orders
+    </p>
+
+    <p className="text-3xl font-black mt-2">
+      {analytics.onlineOrders}
+    </p>
+  </div>
+
+</div>
+{/* DESTINATION TABLE */}
 
             <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden mb-6">
 
